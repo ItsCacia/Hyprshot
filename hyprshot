@@ -17,22 +17,25 @@ Examples:
 
 Options:
   -h, --help                show help message
+  -c, --clipboard-only      copy screenshot to clipboard and don't save image in disk
+  -d, --debug               print debug information
+  -D, --delay               how long to delay taking the screenshot after selection (seconds)
+  -f, --filename            the file name of the resulting screenshot
+  -l, --level               PNG compression level, 0-9, default is 6
   -m, --mode                one of: output, window, region, active, OUTPUT_NAME
   -o, --output-folder       directory in which to save screenshot
-  -f, --filename            the file name of the resulting screenshot
-  -D, --delay               how long to delay taking the screenshot after selection (seconds)
-  -z, --freeze              freeze the screen on initialization
-  -d, --debug               print debug information
-  -s, --silent              don't send notification when screenshot is saved
   -r, --raw                 output raw image data to stdout
+  -s, --silent              don't send notification when screenshot is saved
   -t, --notif-timeout       notification timeout in milliseconds (default 5000)
-  --clipboard-only          copy screenshot to clipboard and don't save image in disk
+  -x, --crosshairs          crosshairs active across display output
+  -z, --freeze              freeze the screen on initialization
   -- [command]              open screenshot with a command of your choosing. e.g. hyprshot -m window -- mirage
 
 Modes:
   output        take screenshot of an entire monitor
   window        take screenshot of an open window
   region        take screenshot of selected region
+  wr-mix        take screenshot of an open window or selected region
   active        take screenshot of active window|output
                 (you must use --mode again with the intended selection)
   OUTPUT_NAME   take screenshot of output with OUTPUT_NAME
@@ -45,8 +48,8 @@ function Print() {
     if [ $DEBUG -eq 0 ]; then
         return 0
     fi
-    
-    1>&2 printf "$@" 
+
+    1>&2 printf "$@"
 }
 
 function send_notification() {
@@ -111,20 +114,20 @@ function save_geometry() {
     local output=""
 
     if [ $RAW -eq 1 ]; then
-        grim -g "${geometry}" -
+        grim -g "${geometry}" -l "$LEVEL" -
         return 0
     fi
 
     if [ $CLIPBOARD -eq 0 ]; then
         mkdir -p "$SAVEDIR"
-        grim -g "${geometry}" "$SAVE_FULLPATH"
+        grim -g "${geometry}" -l "$LEVEL" "$SAVE_FULLPATH"
         output="$SAVE_FULLPATH"
         wl-copy --type image/png < "$output"
         [ -z "$COMMAND" ] || {
             "$COMMAND" "$output"
         }
     else
-        wl-copy --type image/png < <(grim -g "${geometry}" -)
+        wl-copy --type image/png < <(grim -g "${geometry}" -l "$LEVEL" -)
     fi
 
     send_notification $output
@@ -196,7 +199,11 @@ function grab_selected_output() {
 }
 
 function grab_region() {
-    slurp -d
+    if [ $CROSSHAIRS -eq 1 ]; then
+        slurp -d -x
+    else
+        slurp -d
+    fi
 }
 
 function grab_window() {
@@ -208,7 +215,19 @@ function grab_window() {
     # through stdin
     local boxes="$(echo $clients | jq -r '.[] | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1]) \(.title)"' | cut -f1,2 -d' ')"
     Print "Boxes:\n%s\n" "$boxes"
-    slurp -r <<< "$boxes"
+    if [ $CROSSHAIRS -eq 1 ]; then
+        if [ $WR_MIX -eq 1 ]; then
+            slurp -d -x <<< "$boxes"
+        else
+            slurp -d -x -r <<< "$boxes"
+        fi
+    else
+        if [ $WR_MIX -eq 1 ]; then
+            slurp -d <<< "$boxes"
+        else
+            slurp -d -r <<< "$boxes"
+        fi
+    fi
 }
 
 function grab_active_window() {
@@ -225,6 +244,10 @@ function parse_mode() {
         window | region | output)
             OPTION=$mode
             ;;
+        wr-mix)
+            WR_MIX=1
+            OPTION="window"
+            ;;
         active)
             CURRENT=1
             ;;
@@ -236,7 +259,7 @@ function parse_mode() {
 }
 
 function args() {
-    local options=$(getopt -o hf:o:m:D:dszr:t: --long help,filename:,output-folder:,mode:,delay:,clipboard-only,debug,silent,freeze,raw,notif-timeout: -- "$@")
+    local options=$(getopt -o hcdD:f:l:m:o:r:st:xz --long help,clipboard-only,debug,delay:,filename:,level:,mode:,output-folder:,raw,silent,notif-timeout:,crosshairs,freeze -- "$@")
     eval set -- "$options"
 
     while true; do
@@ -245,40 +268,47 @@ function args() {
                 Help
                 exit
                 ;;
-            -o | --output-folder)
-                shift;
-                SAVEDIR=$1
-                ;;
-            -f | --filename)
-                shift;
-                FILENAME=$1
-                ;;
-            -D | --delay)
-		shift;
-                DELAY=$1
-                ;;
-            -m | --mode)
-                shift;
-                parse_mode $1
-                ;;
-            --clipboard-only)
+            -c | --clipboard-only)
                 CLIPBOARD=1
                 ;;
             -d | --debug)
                 DEBUG=1
                 ;;
-            -z | --freeze)
-                FREEZE=1
+            -D | --delay)
+                shift;
+                DELAY=$1
                 ;;
-            -s | --silent)
-                SILENT=1
+            -f | --filename)
+                shift;
+                FILENAME=$1
+                ;;
+            -l | --level)
+                shift;
+                LEVEL=$1
+                ;;
+            -m | --mode)
+                shift;
+                parse_mode $1
+                ;;
+            -o | --output-folder)
+                shift;
+                SAVEDIR=$1
                 ;;
             -r | --raw)
                 RAW=1
                 ;;
+            -s | --silent)
+                SILENT=1
+                ;;
             -t | --notif-timeout)
                 shift;
                 NOTIF_TIMEOUT=$1
+                ;;
+            -x | --crosshairs)
+                CROSSHAIRS=1
+                ;;
+            -z | --freeze)
+                FREEZE=1
                 ;;
             --)
                 shift # Skip -- argument
@@ -306,6 +336,9 @@ RAW=0
 NOTIF_TIMEOUT=5000
 CURRENT=0
 FREEZE=0
+LEVEL=6
+WR_MIX=0
+CROSSHAIRS=0
 [ -z "$XDG_PICTURES_DIR" ] && type xdg-user-dir &> /dev/null && XDG_PICTURES_DIR=$(xdg-user-dir PICTURES)
 FILENAME="$(date +'%Y-%m-%d-%H%M%S_hyprshot.png')"
 [ -z "$HYPRSHOT_DIR" ] && SAVEDIR=${XDG_PICTURES_DIR:=~} || SAVEDIR=${HYPRSHOT_DIR}
