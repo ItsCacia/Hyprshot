@@ -32,6 +32,7 @@ Options:
   -- [command]              open screenshot with a command of your choosing. e.g. hyprshot -m window -- mirage
 
 Modes:
+  all           take screenshot of every monitor
   output        take screenshot of an entire monitor
   window        take screenshot of an open window
   region        take screenshot of selected region
@@ -109,6 +110,31 @@ function trim() {
     echo ${cropped}
 }
 
+function save_all() {
+    local output=""
+
+    if [ $RAW -eq 1 ]; then
+        grim -l "$LEVEL" -
+        return 0
+    fi
+
+    if [ $CLIPBOARD -eq 0 ]; then
+        mkdir -p "$SAVEDIR"
+        grim -l "$LEVEL" "$SAVE_FULLPATH"
+        output="$SAVE_FULLPATH"
+        wl-copy --type image/png < "$output"
+        [ -z "$COMMAND" ] || {
+            "$COMMAND" "$output"
+        }
+    else
+        wl-copy --type image/png < <(grim -l "$LEVEL" -)
+    fi
+
+    send_notification $output
+
+    exit
+}
+
 function save_geometry() {
     local geometry="${1}"
     local output=""
@@ -151,6 +177,9 @@ function begin_grab() {
     fi
     local option=$1
     case $option in
+        all)
+            save_all
+            ;;
         output)
             if [ $CURRENT -eq 1 ]; then
                 local geometry=`grab_active_output`
@@ -241,7 +270,7 @@ function parse_mode() {
     local mode="${1}"
 
     case $mode in
-        window | region | output)
+        all | window | region | output)
             OPTION=$mode
             ;;
         wr-mix)
